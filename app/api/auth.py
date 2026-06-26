@@ -61,20 +61,38 @@ def _build_flow() -> Flow:
 
 
 @router.get("/connect")
-async def connect_youtube(user: User = Depends(get_current_user)):
+async def connect_youtube(
+    token: str,
+    db: AsyncSession = Depends(get_db),
+):
     """
     Step 1: redirect the logged-in user to Google's consent screen.
-    The frontend should open this URL (e.g. window.location = ... or a
-    popup), not fetch it via XHR, since it's a browser redirect chain.
+    Accepts the Firebase ID token as a URL parameter since browser
+    redirects cannot send Authorization headers.
     """
+    # Verify the token manually since we can't use the normal dependency
+    from firebase_admin import auth as firebase_auth
+    from app.models.user import User
+    from sqlalchemy import select
+
+    get_firebase_app()
+    try:
+        decoded = firebase_auth.verify_id_token(token)
+    except Exception:
+        raise HTTPException(401, "Invalid or expired token. Please log in again.")
+
+    firebase_uid = decoded["uid"]
+    result = await db.execute(select(User).where(User.firebase_uid == firebase_uid))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(404, "User not found.")
+
     flow = _build_flow()
-
     state = _serializer().dumps({"user_id": str(user.id), "ts": time.time()})
-
     auth_url, _ = flow.authorization_url(
-        access_type="offline",       # required to get a refresh_token
+        access_type="offline",
         include_granted_scopes="true",
-        prompt="consent",            # forces refresh_token on repeat connects too
+        prompt="consent",
         state=state,
     )
     return RedirectResponse(auth_url)
