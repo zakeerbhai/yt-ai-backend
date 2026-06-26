@@ -1,0 +1,37 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pydantic-settings==2.7.1
+
+# Database
+sqlalchemy==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
+
+# Background jobs
+celery==5.4.0
+redis==5.2.1
+
+# Auth
+firebase-admin==6.6.0
+python-jose[cryptography]==3.3.0
+google-auth==2.37.0
+google-auth-oauthlib==1.2.1
+google-api-python-client==2.157.0
+
+# Media / AI integrations
+cloudinary==1.41.0
+assemblyai==0.35.1
+google-generativeai==0.8.3
+
+# Security
+cryptography==44.0.0
+itsdangerous==2.2.0
+
+# HTTP
+httpx==0.28.1
+
+# Utilities
+python-multipart==0.0.20
+python-dotenv==1.0.1
+tenacity==9.0.0
