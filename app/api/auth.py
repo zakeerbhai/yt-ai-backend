@@ -1,23 +1,10 @@
 """
 YouTube OAuth connect flow.
-
-  GET /api/auth/youtube/connect
-      -> redirects the browser to Google's consent screen
-
-  GET /api/auth/youtube/callback
-      -> Google redirects back here with a `code`; we exchange it for
-         tokens, fetch the channel's identity via the Data API, encrypt
-         + store the tokens, and create/update the Channel row.
-
-State/CSRF handling: we sign a short-lived state token containing the
-requesting user's id, so the callback (which has no Authorization
-header — it's a browser redirect from Google) knows which user to
-attach the channel to, and we can verify the request wasn't forged.
 """
-import json
 import time
 import uuid
 
+from firebase_admin import auth as firebase_auth
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from google_auth_oauthlib.flow import Flow
@@ -28,13 +15,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_user
 from app.core.config import get_settings
 from app.core.database import get_db
+from app.core.firebase import get_firebase_app
 from app.models.user import User, Channel, AutoPublishMode
 from app.services.token_cipher import TokenCipher
 from app.services.youtube_service import YouTubeService, YOUTUBE_UPLOAD_SCOPES
 
 router = APIRouter(prefix="/api/auth/youtube", tags=["auth"])
 
-STATE_MAX_AGE_SECONDS = 600  # 10 minutes to complete the OAuth round trip
+STATE_MAX_AGE_SECONDS = 600
 
 
 def _serializer() -> URLSafeTimedSerializer:
@@ -65,16 +53,6 @@ async def connect_youtube(
     token: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Step 1: redirect the logged-in user to Google's consent screen.
-    Accepts the Firebase ID token as a URL parameter since browser
-    redirects cannot send Authorization headers.
-    """
-    # Verify the token manually since we can't use the normal dependency
-    from firebase_admin import auth as firebase_auth
-    from app.models.user import User
-    from sqlalchemy import select
-
     get_firebase_app()
     try:
         decoded = firebase_auth.verify_id_token(token)
@@ -104,14 +82,6 @@ async def youtube_oauth_callback(
     state: str = Query(...),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Step 2: Google redirects here with an authorization code. We:
-      1. Verify the signed state token (CSRF protection + recover user_id)
-      2. Exchange the code for access/refresh tokens
-      3. Look up the channel identity via the Data API
-      4. Encrypt tokens, upsert the Channel row
-      5. Redirect back to the frontend
-    """
     settings = get_settings()
 
     try:
@@ -131,10 +101,6 @@ async def youtube_oauth_callback(
     credentials = flow.credentials
 
     if not credentials.refresh_token:
-        # Happens if the user previously granted access and Google
-        # didn't re-issue a refresh_token despite prompt=consent in some
-        # edge cases. Without it we can't keep the connection alive past
-        # the first hour, so treat this as a hard failure.
         raise HTTPException(
             400,
             "Google did not return a refresh token. Please revoke this app's access at "
@@ -156,10 +122,7 @@ async def youtube_oauth_callback(
 
     if channel:
         if channel.owner_id != user.id:
-            raise HTTPException(
-                409,
-                "This YouTube channel is already connected to a different account.",
-            )
+            raise HTTPException(409, "This YouTube channel is already connected to a different account.")
         channel.access_token_encrypted = encrypted_access
         channel.refresh_token_encrypted = encrypted_refresh
         channel.token_expiry = credentials.expiry
@@ -175,7 +138,7 @@ async def youtube_oauth_callback(
             access_token_encrypted=encrypted_access,
             refresh_token_encrypted=encrypted_refresh,
             token_expiry=credentials.expiry,
-            auto_publish_mode=AutoPublishMode.MANUAL_REVIEW,  # safe default
+            auto_publish_mode=AutoPublishMode.MANUAL_REVIEW,
         )
         db.add(channel)
 
