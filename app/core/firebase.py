@@ -1,10 +1,10 @@
 """
-Firebase Admin SDK initialization. Used for:
-  - Verifying ID tokens sent by the frontend (Authorization: Bearer <token>)
-  - Sending push notifications (FCM) — see services/notifications.py
-
-Initialized once, lazily, from the service account JSON path in settings.
+Firebase Admin SDK initialization.
+Supports two modes:
+1. Local development: reads from a service account JSON file
+2. Production (Railway): reads from FIREBASE_SERVICE_ACCOUNT_JSON environment variable
 """
+import json
 import os
 from functools import lru_cache
 
@@ -17,15 +17,23 @@ from app.core.config import get_settings
 @lru_cache
 def get_firebase_app() -> firebase_admin.App:
     settings = get_settings()
-    path = settings.firebase_service_account_json_path
 
-    if not os.path.exists(path):
-        raise RuntimeError(
-            f"Firebase service account file not found at '{path}'. "
-            "Download it from Firebase Console > Project Settings > "
-            "Service Accounts > Generate new private key, and set "
-            "FIREBASE_SERVICE_ACCOUNT_JSON_PATH accordingly. Never commit this file."
-        )
+    # Production: read from environment variable (Railway)
+    json_str = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON")
+    if json_str:
+        service_account_info = json.loads(json_str)
+        cred = credentials.Certificate(service_account_info)
+    else:
+        # Local development: read from file
+        path = settings.firebase_service_account_json_path
+        if not os.path.exists(path):
+            raise RuntimeError(
+                f"Firebase service account file not found at '{path}'. "
+                "Either set FIREBASE_SERVICE_ACCOUNT_JSON environment variable "
+                "or provide the file path in settings."
+            )
+        cred = credentials.Certificate(path)
 
-    cred = credentials.Certificate(path)
-    return firebase_admin.initialize_app(cred, {"projectId": settings.firebase_project_id})
+    return firebase_admin.initialize_app(
+        cred, {"projectId": settings.firebase_project_id}
+    )
